@@ -23,6 +23,7 @@ const { CookieJar } = require("tough-cookie");
 const cheerio = require("cheerio");
 const cookieParser = require("cookie-parser");
 const cors = require("cors");
+const PDFDocument = require("pdfkit");
 
 const app = express();
 app.use(cors());
@@ -668,12 +669,32 @@ function parseCaseHistoryTable($) {
 
 /**
  * Parse viewBusiness onclick.
- * viewBusiness(nextdate1, case_number1, state_code, disposal_flag, businessDate, national_court_code, court_no, search_by, srno)
+ * Portal signature:
+ * viewBusiness(court_code, dist_code, nextdate1, case_number1, state_code,
+ *              disposal_flag, businessDate, court_no, national_court_code,
+ *              search_by, srno)
  */
 function parseViewBusinessOnClick(raw) {
   const match = raw.match(/viewBusiness\(([^)]+)\)/);
   if (!match) return {};
   const parts = match[1].split(",").map((s) => s.trim().replace(/^'|'$/g, ""));
+
+  if (parts.length >= 11) {
+    return {
+      court_code: parts[0] || "",
+      dist_code: parts[1] || "",
+      nextdate1: parts[2] || "",
+      case_number1: parts[3] || "",
+      state_code: parts[4] || "",
+      disposal_flag: parts[5] || "",
+      businessDate: parts[6] || "",
+      court_no: parts[7] || "",
+      national_court_code: parts[8] || "",
+      search_by: parts[9] || "",
+      srno: parts[10] || "",
+    };
+  }
+
   return {
     nextdate1: parts[0] || "",
     case_number1: parts[1] || "",
@@ -863,6 +884,107 @@ function parseViewBusinessHtml(html) {
   return result;
 }
 
+function normalizeViewBusinessResponse(payload) {
+  if (typeof payload === "string") {
+    return {
+      html: payload,
+      raw: payload,
+      upstreamStatus: null,
+    };
+  }
+
+  if (!payload || typeof payload !== "object") {
+    return {
+      html: "",
+      raw: payload,
+      upstreamStatus: null,
+    };
+  }
+
+  return {
+    html: payload.data_list || payload.business_data || "",
+    raw: payload,
+    upstreamStatus:
+      payload.status !== undefined && payload.status !== null
+        ? Number(payload.status)
+        : null,
+  };
+}
+
+function buildBusinessDetailPdfBuffer(details) {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({
+      size: "A4",
+      margin: 50,
+      info: {
+        Title: `Business Details - ${details.case_number || "Case"}`,
+      },
+    });
+    const chunks = [];
+
+    doc.on("data", (chunk) => chunks.push(chunk));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+
+    doc.fontSize(18).text("Daily Status", { align: "center" });
+    doc.moveDown(0.5);
+
+    if (details.court_name) {
+      doc.fontSize(14).text(details.court_name, { align: "center" });
+      doc.moveDown(0.25);
+    }
+
+    const rows = [
+      ["In the Court of", details.court_of],
+      ["CNR Number", details.cnr_number],
+      ["Case Number", details.case_number],
+      ["Date", details.date],
+      ["Parties", details.parties],
+      ["Business", details.business],
+      ["Next Purpose", details.next_purpose],
+      ["Next Hearing Date", details.next_hearing_date],
+    ];
+
+    doc.moveDown(1);
+    rows.forEach(([label, value]) => {
+      if (!value) return;
+      doc.font("Helvetica-Bold").fontSize(11).text(`${label}:`, {
+        continued: true,
+      });
+      doc.font("Helvetica").text(` ${value}`);
+      doc.moveDown(0.4);
+    });
+
+    doc.end();
+  });
+}
+
+function buildBusinessDetailQueryParams(query) {
+  return {
+    cino: query.cino || "",
+    params: {
+      court_code: firstDefined(query.court_code, query.courtCode),
+      state_code: firstDefined(query.state_code, query.stateCode),
+      dist_code: firstDefined(query.dist_code, query.distCode),
+      court_complex_code: firstDefined(
+        query.court_complex_code,
+        query.courtComplexCode,
+      ),
+      nextdate1: query.nextdate1 || "",
+      case_number1: firstDefined(query.case_number1, query.caseNumber1),
+      disposal_flag: firstDefined(query.disposal_flag, query.disposalFlag),
+      businessDate: query.businessDate || "",
+      national_court_code: firstDefined(
+        query.national_court_code,
+        query.nationalCourtCode,
+      ),
+      court_no: firstDefined(query.court_no, query.courtNo),
+      search_by: firstDefined(query.search_by, query.searchBy),
+      srno: query.srno || "",
+    },
+  };
+}
+
 // ─── Layer Fetch Helpers ─────────────────────────────────────────────────────
 
 /** Layer 2: viewHistory – full case detail */
@@ -914,22 +1036,34 @@ async function fetchIABusiness(session, iaParams, parentCino) {
 
 /** Layer 3.2: viewBusiness */
 async function fetchViewBusiness(session, bParams, cino) {
-  const data = await postWithRetry(session, "home/viewBusiness", {
-    court_code: bParams.court_code || "",
-    state_code: bParams.state_code || session.stateCode,
-    dist_code: session.distCode,
-    court_complex_code: session.complexCode,
+  const payload = {
+    court_code: bParams.court_code || bParams.courtCode || "",
+    state_code: bParams.state_code || bParams.stateCode || session.stateCode,
+    dist_code: bParams.dist_code || bParams.distCode || session.distCode,
+    court_complex_code:
+      bParams.court_complex_code ||
+      bParams.courtComplexCode ||
+      session.complexCode,
     nextdate1: bParams.nextdate1,
-    case_number1: bParams.case_number1 || cino,
-    disposal_flag: bParams.disposal_flag || "Pending",
+    case_number1: bParams.case_number1 || bParams.caseNumber1 || cino,
+    disposal_flag: bParams.disposal_flag || bParams.disposalFlag || "Pending",
     businessDate: bParams.businessDate,
-    national_court_code: bParams.national_court_code,
-    court_no: bParams.court_no,
-    search_by: bParams.search_by || "CSpartyName",
+    national_court_code:
+      bParams.national_court_code || bParams.nationalCourtCode,
+    court_no: bParams.court_no || bParams.courtNo,
+    search_by: bParams.search_by || bParams.searchBy || "CSpartyName",
     srno: bParams.srno,
-  });
-  const html = typeof data === "object" ? data.data_list : data;
-  return parseViewBusinessHtml(html || "");
+  };
+
+  const data = await postWithRetry(session, "home/viewBusiness", payload);
+  const normalized = normalizeViewBusinessResponse(data);
+  return {
+    status: normalized.upstreamStatus ?? 1,
+    data_list: normalized.html || "",
+    parsed: parseViewBusinessHtml(normalized.html || ""),
+    raw: normalized.raw,
+    requestPayload: payload,
+  };
 }
 
 /** Layer 3.3: display_pdf */
@@ -945,6 +1079,27 @@ async function fetchDisplayPdf(session, pdfParams) {
   return orderPath
     ? { pdf_url: `${BASE_URL}${orderPath}`, raw_path: orderPath }
     : { pdf_url: null, raw_path: null };
+}
+
+async function fetchDisplayPdfBinary(session, pdfParams) {
+  const pdfMeta = await fetchDisplayPdf(session, pdfParams);
+  if (!pdfMeta.pdf_url) {
+    return { pdf_url: null, raw_path: null, contentType: null, data: null };
+  }
+
+  const resp = await session.client.get(pdfMeta.pdf_url, {
+    responseType: "arraybuffer",
+    headers: {
+      Accept: "application/pdf,*/*",
+      Referer: "https://services.ecourts.gov.in/ecourtindia_v6/?p=casestatus/index",
+    },
+  });
+
+  return {
+    ...pdfMeta,
+    contentType: resp.headers["content-type"] || "application/pdf",
+    data: resp.data,
+  };
 }
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
@@ -1388,18 +1543,74 @@ app.post("/api/partyname/case-data", async (req, res) => {
 
 /**
  * Standalone — fetch single case detail by viewHistory params.
- * Body: { sessionId, caseNo, cino, courtCode, stateCode, distCode, complexCode, searchBy? }
+ * Body: {
+ *   sessionId,
+ *   caseNo|case_no,
+ *   cino,
+ *   courtCode|court_code,
+ *   hideparty?,
+ *   searchFlag|search_flag?,
+ *   stateCode|state_code,
+ *   distCode|dist_code,
+ *   complexCode|complex_code|court_complex_code,
+ *   searchBy|search_by?
+ * }
  */
 app.post("/api/partyname/case-detail", async (req, res) => {
-  const { sessionId, ...params } = req.body;
+  const { sessionId } = req.body;
   if (!sessionId)
     return res.status(400).json({ success: false, error: "Missing sessionId" });
 
   try {
     const session = getSession(sessionId);
+    const params = {
+      caseNo: firstDefined(req.body.caseNo, req.body.case_no),
+      cino: req.body.cino || "",
+      courtCode: firstDefined(req.body.courtCode, req.body.court_code),
+      hideparty: firstDefined(req.body.hideparty, ""),
+      searchFlag: firstDefined(
+        req.body.searchFlag,
+        req.body.search_flag,
+        "CScaseNumber",
+      ),
+      stateCode: firstDefined(req.body.stateCode, req.body.state_code),
+      distCode: firstDefined(req.body.distCode, req.body.dist_code),
+      complexCode: firstDefined(
+        req.body.complexCode,
+        req.body.complex_code,
+        req.body.court_complex_code,
+      ),
+      searchBy: firstDefined(req.body.searchBy, req.body.search_by, "CSpartyName"),
+    };
+
+    if (!params.caseNo || !params.cino || !params.courtCode) {
+      return res.status(400).json({
+        success: false,
+        error:
+          "Missing required fields: caseNo/case_no, cino, courtCode/court_code",
+      });
+    }
+
     const html = await fetchViewHistory(session, params);
     const detail = parseCaseDetail(html);
-    res.json({ success: true, detail, rawHtml: html });
+    res.json({
+      success: true,
+      status: 1,
+      message: "Case details fetched successfully",
+      detail,
+      rawHtml: html,
+      requestPayload: {
+        court_code: params.courtCode,
+        state_code: params.stateCode || session.stateCode,
+        dist_code: params.distCode || session.distCode,
+        court_complex_code: params.complexCode || session.complexCode,
+        case_no: params.caseNo,
+        cino: params.cino,
+        hideparty: params.hideparty || "",
+        search_flag: params.searchFlag || "CScaseNumber",
+        search_by: params.searchBy || "CSpartyName",
+      },
+    });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -1425,8 +1636,21 @@ app.post("/api/partyname/ia-business", async (req, res) => {
 
 /**
  * Standalone — fetch business-on-date detail.
- * Body: { sessionId, nextdate1, case_number1, state_code, disposal_flag, businessDate,
- *         national_court_code, court_no, search_by, srno }
+ * Body: {
+ *   sessionId, cino?,
+ *   court_code|courtCode,
+ *   state_code|stateCode,
+ *   dist_code|distCode,
+ *   court_complex_code|courtComplexCode,
+ *   nextdate1,
+ *   case_number1|caseNumber1,
+ *   disposal_flag|disposalFlag,
+ *   businessDate,
+ *   national_court_code|nationalCourtCode,
+ *   court_no|courtNo,
+ *   search_by|searchBy,
+ *   srno
+ * }
  */
 app.post("/api/partyname/business-detail", async (req, res) => {
   const { sessionId, cino, ...bParams } = req.body;
@@ -1436,9 +1660,133 @@ app.post("/api/partyname/business-detail", async (req, res) => {
   try {
     const session = getSession(sessionId);
     const result = await fetchViewBusiness(session, bParams, cino);
-    res.json({ success: true, result });
+
+    if (!result.data_list && result.status !== 1) {
+      return res.status(422).json({
+        success: false,
+        status: 0,
+        error:
+          "Empty response from eCourts for viewBusiness. Session may be stale or the business row may no longer be available.",
+      });
+    }
+
+    res.json({
+      success: true,
+      status: result.status,
+      message: "Business details fetched successfully",
+      result: result.parsed,
+    });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * Standalone — fetch business-on-date detail via GET.
+ * Query: same params as POST /api/partyname/business-detail
+ * Optional:
+ *   format=pdf  -> returns generated PDF
+ *   download=false -> renders PDF inline instead of attachment
+ */
+app.get("/api/partyname/business-detail", async (req, res) => {
+  const { sessionId } = req.query;
+  if (!sessionId) {
+    return res.status(400).json({ success: false, error: "Missing sessionId" });
+  }
+
+  const { cino, params } = buildBusinessDetailQueryParams(req.query);
+
+  try {
+    const session = getSession(sessionId);
+    const result = await fetchViewBusiness(session, params, cino);
+
+    if (!result.data_list && result.status !== 1) {
+      return res.status(422).json({
+        success: false,
+        status: 0,
+        error:
+          "Empty response from eCourts for viewBusiness. Session may be stale or the business row may no longer be available.",
+      });
+    }
+
+    const format = String(req.query.format || "json").toLowerCase();
+    if (format === "pdf") {
+      const pdfBuffer = await buildBusinessDetailPdfBuffer(result.parsed || {});
+      const safeName = `${(result.parsed?.case_number || "business-detail")
+        .replace(/[^\w.-]+/g, "_")}.pdf`;
+      const download = String(req.query.download || "true").toLowerCase() !== "false";
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader(
+        "Content-Disposition",
+        `${download ? "attachment" : "inline"}; filename="${safeName}"`,
+      );
+      return res.send(pdfBuffer);
+    }
+
+    return res.json({
+      success: true,
+      status: result.status,
+      message: "Business details fetched successfully",
+      result: result.parsed,
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * Standalone — fetch business details and download them as a PDF.
+ * Query: same params as /api/partyname/business-detail, but sent as GET query params.
+ */
+app.get("/api/partyname/business-detail/print", async (req, res) => {
+  const { sessionId, cino } = req.query;
+  if (!sessionId) {
+    return res.status(400).json({ success: false, error: "Missing sessionId" });
+  }
+
+  const bParams = {
+    court_code: firstDefined(req.query.court_code, req.query.courtCode),
+    state_code: firstDefined(req.query.state_code, req.query.stateCode),
+    dist_code: firstDefined(req.query.dist_code, req.query.distCode),
+    court_complex_code: firstDefined(
+      req.query.court_complex_code,
+      req.query.courtComplexCode,
+    ),
+    nextdate1: req.query.nextdate1 || "",
+    case_number1: firstDefined(req.query.case_number1, req.query.caseNumber1),
+    disposal_flag: firstDefined(req.query.disposal_flag, req.query.disposalFlag),
+    businessDate: req.query.businessDate || "",
+    national_court_code: firstDefined(
+      req.query.national_court_code,
+      req.query.nationalCourtCode,
+    ),
+    court_no: firstDefined(req.query.court_no, req.query.courtNo),
+    search_by: firstDefined(req.query.search_by, req.query.searchBy),
+    srno: req.query.srno || "",
+  };
+
+  try {
+    const session = getSession(sessionId);
+    const result = await fetchViewBusiness(session, bParams, cino);
+
+    if (!result.data_list && result.status !== 1) {
+      return res.status(422).json({
+        success: false,
+        status: 0,
+        error:
+          "Empty response from eCourts for viewBusiness. Session may be stale or the business row may no longer be available.",
+      });
+    }
+
+    const pdfBuffer = await buildBusinessDetailPdfBuffer(result.parsed || {});
+    const fileName = `${(result.parsed?.case_number || "business-detail")
+      .replace(/[^\w.-]+/g, "_")}.pdf`;
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+    return res.send(pdfBuffer);
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -1457,6 +1805,52 @@ app.post("/api/partyname/order-pdf", async (req, res) => {
     res.json({ success: true, result });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * Standalone — fetch and stream the actual PDF for an order.
+ * Query: ?sessionId=...&normal_v=...&case_val=...&court_code=...&filename=...&appFlag=...
+ */
+app.get("/api/partyname/order-pdf", async (req, res) => {
+  const { sessionId } = req.query;
+  if (!sessionId) {
+    return res.status(400).json({ success: false, error: "Missing sessionId" });
+  }
+
+  const pdfParams = {
+    normal_v: firstDefined(req.query.normal_v, req.query.normalV),
+    case_val: firstDefined(req.query.case_val, req.query.caseVal),
+    court_code: firstDefined(req.query.court_code, req.query.courtCode),
+    filename: req.query.filename || "",
+    appFlag: firstDefined(req.query.appFlag, req.query.app_flag, ""),
+  };
+
+  if (!pdfParams.normal_v || !pdfParams.case_val || !pdfParams.court_code || !pdfParams.filename) {
+    return res.status(400).json({
+      success: false,
+      error:
+        "Missing required query params: normal_v, case_val, court_code, filename",
+    });
+  }
+
+  try {
+    const session = getSession(sessionId);
+    const pdfResult = await fetchDisplayPdfBinary(session, pdfParams);
+
+    if (!pdfResult.data || !pdfResult.pdf_url) {
+      return res.status(404).json({
+        success: false,
+        error: "PDF not available for the provided order parameters.",
+      });
+    }
+
+    const safeFileName = pdfParams.filename.toString().split("/").pop() || "order.pdf";
+    res.setHeader("Content-Type", pdfResult.contentType || "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${safeFileName}"`);
+    return res.send(Buffer.from(pdfResult.data));
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 
