@@ -71,6 +71,9 @@ Typical frontend flow:
   - `complex_number`
   - `court_codes`
   - `differ_mast_est`
+- `differ_mast_est` is the key frontend flag for deciding whether establishment selection is mandatory.
+  - `Y` means the frontend must show the establishment selector and send `estCode` when submitting searches.
+  - `N` means the frontend can hide the establishment selector and proceed without `estCode`.
 - `/api/partyname/case-data` no longer returns `sampleCases`.
 - `/api/partyname/case-detail` now returns a grouped, portal-like structure in `result`.
 - Empty fields are preserved in `case-detail`; they are not stripped out.
@@ -83,6 +86,300 @@ Typical frontend flow:
 - Order rows keep `pdfProxy` so the frontend can open order PDFs directly.
 - `GET /api/partyname/business-detail` and `GET /api/partyname/business-detail/print` were intentionally removed.
   Frontend printing should now be done client-side after calling `POST /api/partyname/business-detail`.
+
+## Frontend Integration Using `mainport1.js`
+
+This backend is designed to support the same functional flow used in [mainport1.js](/home/krishna/Desktop/Code/Jurident%20Backend%20(%20Shared%20)/partyname2/mainport1.js).
+
+Important frontend references from that file:
+
+- court complex selector:
+  - `#court_complex_code`
+- establishment selector:
+  - `#court_est_code`
+- establishment container div:
+  - `#est_codes`
+- party-name submit function:
+  - `submit_party_name()`
+- case-number submit function:
+  - `submitCaseNo()`
+- filing-number submit function:
+  - `submit_filing_no()`
+- advocate submit function:
+  - `submit_adv_name()`
+- FIR submit function:
+  - `submitFirNumber()`
+- business-detail UI handler:
+  - `viewBusiness(...)`
+- IA business UI handler:
+  - `viewIABusiness(...)`
+
+### Court Complex and Establishment Mapping
+
+In `mainport1.js`, the selected court complex value is split like this:
+
+```js
+var courtArr = $('#court_complex_code').val();
+var court_est_arr = courtArr.split('@');
+var court_complex = court_est_arr[0];
+var differ_mast_est = court_est_arr[2];
+```
+
+That same pattern is now exposed by the backend in a cleaner form through `/api/common/courts`.
+
+Instead of parsing only the raw encoded value on the frontend, use:
+
+- `code`
+  - actual `courtComplexCode` for API calls
+- `complex_number`
+  - full raw combined portal value
+- `court_codes`
+  - allowed court codes under that complex
+- `differ_mast_est`
+  - frontend decision flag for establishment behavior
+
+Example court item:
+
+```json
+{
+  "code": "1260008",
+  "options": "Rouse Avenue District Court",
+  "complex_number": "1260008@5,6,7@Y",
+  "court_codes": ["5", "6", "7"],
+  "differ_mast_est": "Y"
+}
+```
+
+### How Frontend Should Handle `Y` and `N`
+
+This is the most important frontend rule.
+
+When the selected court from `/api/common/courts` has:
+
+- `differ_mast_est = "Y"`
+  - show the establishment selection div
+  - call `/api/common/establishments`
+  - require the user to choose an establishment
+  - pass `estCode` in `/api/common/set-fields`
+  - also pass `estCode` in search APIs when needed
+
+- `differ_mast_est = "N"`
+  - hide the establishment selection div
+  - do not force establishment selection
+  - call `/api/common/set-fields` without `estCode`
+
+This matches the behavior seen in `mainport1.js`, where all search submit functions check:
+
+```js
+if (differ_mast_est == 'Y' && (est_code == '' || est_code == 0)) {
+  errorAlert(alerts_array[71]);
+  return false;
+}
+```
+
+### Recommended UI Rule for Showing the Establishment Division
+
+Use the backend response from `/api/common/courts`:
+
+```js
+if (selectedCourt.differ_mast_est === "Y") {
+  showEstablishmentDiv();
+  await fetchEstablishments();
+} else {
+  hideEstablishmentDiv();
+  clearSelectedEstablishment();
+}
+```
+
+Equivalent UI behavior for the legacy HTML in `mainport1.js`:
+
+- show `[mainport1.js](/home/krishna/Desktop/Code/Jurident%20Backend%20(%20Shared%20)/partyname2/mainport1.js):2447` style container `#est_codes` only when `differ_mast_est === 'Y'`
+- hide `#est_codes` when `differ_mast_est === 'N'`
+
+### When to Trigger `/api/common/set-fields`
+
+Frontend developers should call `set-fields` after the user has selected:
+
+1. state
+2. district
+3. court complex
+4. establishment only if `differ_mast_est === 'Y'`
+
+Recommended sequence:
+
+1. user selects state
+2. call `/api/common/districts`
+3. user selects district
+4. call `/api/common/courts`
+5. user selects court complex
+6. inspect `differ_mast_est`
+7. if `Y`, show establishment dropdown and call `/api/common/establishments`
+8. after final selection is ready, call `/api/common/set-fields`
+
+Recommended `set-fields` payload when `differ_mast_est = "Y"`:
+
+```json
+{
+  "sessionId": "sess_1774780000000_abcd1234",
+  "stateCode": "26",
+  "distCode": "8",
+  "complexCode": "1260008",
+  "estCode": "5"
+}
+```
+
+Recommended `set-fields` payload when `differ_mast_est = "N"`:
+
+```json
+{
+  "sessionId": "sess_1774780000000_abcd1234",
+  "stateCode": "26",
+  "distCode": "8",
+  "complexCode": "1260008"
+}
+```
+
+### Mapping to `mainport1.js` Search Functions
+
+The backend supports the same state/district/court/establishment dependency used by these frontend functions:
+
+- `submit_party_name()`
+- `submitCaseNo()`
+- `submit_filing_no()`
+- `submit_adv_name()`
+- `submitFirNumber()`
+
+Each of these functions in `mainport1.js` does the same logical preparation:
+
+1. read `state_code`
+2. read `dist_code`
+3. split `court_complex_code`
+4. read `est_code`
+5. block submission if `differ_mast_est === 'Y'` and no establishment is selected
+6. submit the final form payload
+
+That same frontend rule should be preserved with this backend.
+
+## Formal Frontend Mapping
+
+Recommended frontend state mapping:
+
+```ts
+type SelectedCourt = {
+  code: string;
+  options: string;
+  complex_number?: string;
+  court_codes?: string[];
+  differ_mast_est?: "Y" | "N";
+};
+```
+
+Recommended derived UI state:
+
+```ts
+const requiresEstablishment = selectedCourt?.differ_mast_est === "Y";
+```
+
+Recommended request mapping:
+
+- `stateCode` = selected state code
+- `distCode` = selected district code
+- `complexCode` = selected court `code`
+- `courtComplexCode` = selected court `code`
+- `complex_number` = selected court `complex_number`
+- `estCode` = selected establishment code only when required
+
+## Business Detail API and Frontend Printing
+
+The original portal flow in `mainport1.js` uses `viewBusiness(...)` to:
+
+1. fetch business detail HTML
+2. inject that HTML into a visible business-detail div
+3. show a print button
+4. trigger browser printing through frontend code
+
+Relevant frontend references in `mainport1.js`:
+
+- `viewBusiness(...)`
+- `printContent(id)`
+
+The backend now intentionally supports that same pattern in a cleaner way:
+
+- use `POST /api/partyname/business-detail` to fetch the parsed business detail and the raw HTML
+- render the returned `rawHtml` or a formatted UI on the frontend
+- trigger `window.print()` or your own print component from the frontend
+
+Important:
+
+- the backend does not generate printable business-detail PDFs anymore
+- the removed routes are:
+  - `GET /api/partyname/business-detail`
+  - `GET /api/partyname/business-detail/print`
+
+### Recommended Frontend Business Detail Flow
+
+1. user clicks a row in `case_history`
+2. frontend reads `business_params`
+3. frontend calls `POST /api/partyname/business-detail`
+4. frontend renders:
+   - parsed `result`
+   - or `rawHtml`
+5. frontend shows a print button
+6. frontend triggers browser print
+
+Recommended payload source:
+
+```json
+{
+  "sessionId": "{{sessionId}}",
+  "cino": "{{caseCino}}",
+  "court_code": "{{history.business_params.court_code}}",
+  "state_code": "{{history.business_params.state_code}}",
+  "dist_code": "{{history.business_params.dist_code}}",
+  "court_complex_code": "{{selectedCourt.code}}",
+  "nextdate1": "{{history.business_params.nextdate1}}",
+  "case_number1": "{{history.business_params.case_number1}}",
+  "disposal_flag": "{{history.business_params.disposal_flag}}",
+  "businessDate": "{{history.business_params.businessDate}}",
+  "national_court_code": "{{history.business_params.national_court_code}}",
+  "court_no": "{{history.business_params.court_no}}",
+  "search_by": "{{history.business_params.search_by}}",
+  "srno": "{{history.business_params.srno}}"
+}
+```
+
+### Recommended Print Strategy
+
+Two valid frontend approaches:
+
+- render `rawHtml` inside a print container and call `window.print()`
+- map the parsed `result` into your own React/Vue/HTML component and print that component
+
+For most UI teams, the best option is:
+
+- use parsed `result` for regular screen UI
+- keep `rawHtml` as a fallback when exact portal formatting is required
+
+## Formal Mapping for the Establishment Division
+
+If your frontend has a dedicated establishment wrapper like the legacy `#est_codes` div, the rule should be:
+
+```js
+const shouldShowEstablishmentDivision =
+  selectedCourt?.differ_mast_est === "Y";
+```
+
+Behavior:
+
+- if `true`
+  - show the establishment division
+  - fetch establishments
+  - make establishment selection mandatory before submit
+
+- if `false`
+  - hide the establishment division
+  - clear establishment value
+  - do not require `estCode`
 
 ## Common APIs
 
