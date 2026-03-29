@@ -1,7 +1,7 @@
 "use strict";
 
 const { BASE_URL } = require("../../../config/ecourts");
-const { postWithRetry, fetchCaptchaPayload } = require("../../common/service");
+const { postWithRetry, fetchCaptchaPayload } = require("../../portal/portal.service");
 const {
   normalizePartySearchResponse,
   normalizeViewBusinessResponse,

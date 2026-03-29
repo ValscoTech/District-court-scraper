@@ -1,7 +1,7 @@
 "use strict";
 
-const { COMMON_MESSAGES } = require("./constants");
-const { firstDefined } = require("./utils/common");
+const { COMMON_MESSAGES } = require("./portal.constants");
+const { firstDefined } = require("../../shared/utils/common.util");
 
 function validateInit(_req, _res, next) {
   next();

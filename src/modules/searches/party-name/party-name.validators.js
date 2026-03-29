@@ -1,7 +1,7 @@
 "use strict";
 
 const { firstDefined } = require("./utils/common");
-const { MESSAGES } = require("./constants");
+const { MESSAGES } = require("./party-name.constants");
 
 function validateCaseData(req, res, next) {
   const petresName = firstDefined(req.body.petresName, req.body.petres_name);

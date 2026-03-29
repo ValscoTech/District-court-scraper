@@ -1,7 +1,7 @@
 "use strict";
 
 const { DEFAULT_HEADERS } = require("../../config/ecourts");
-const { buildForm, sleep } = require("./utils/common");
+const { buildForm, sleep } = require("../../shared/utils/common.util");
 
 async function initSession(session) {
   const resp = await session.client.get("", {

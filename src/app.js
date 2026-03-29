@@ -1,25 +1,26 @@
 "use strict";
 
-require("dotenv").config();
-
 const express = require("express");
 const cookieParser = require("cookie-parser");
 const cors = require("cors");
 
-const commonRoutes = require("./modules/common/routes");
-const partynameSearchRoutes = require("./modules/partyname/search/routes");
+const { corsOptions } = require("./config/cors");
+const { requestLogger } = require("./middleware/request-logger.middleware");
+const portalRoutes = require("./modules/portal/portal.routes");
+const partyNameRoutes = require("./modules/searches/party-name/party-name.routes");
 const { notFound } = require("./middleware/notFound");
 const { errorHandler } = require("./middleware/errorHandler");
 
 const app = express();
 
-app.use(cors());
+app.use(cors(corsOptions));
 app.use(cookieParser());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(requestLogger);
 
-app.use("/api/common", commonRoutes);
-app.use("/api/partyname", partynameSearchRoutes);
+app.use("/api/common", portalRoutes);
+app.use("/api/partyname", partyNameRoutes);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 

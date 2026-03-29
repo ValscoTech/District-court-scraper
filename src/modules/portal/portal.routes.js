@@ -2,9 +2,9 @@
 
 const express = require("express");
 
-const controller = require("./controller");
-const validators = require("./validators");
-const { COMMON_ROUTE_PATHS } = require("./routePaths");
+const controller = require("./portal.controller");
+const validators = require("./portal.validators");
+const { COMMON_ROUTE_PATHS } = require("./portal.route-paths");
 
 const router = express.Router();
 

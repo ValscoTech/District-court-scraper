@@ -1,16 +1,16 @@
 "use strict";
 
-const { buildForm, firstDefined, sendJsonSuccess } = require("./utils/common");
-const { COMMON_MESSAGES } = require("./constants");
-const { parseOptionList } = require("./parsers");
+const { buildForm, firstDefined, sendJsonSuccess } = require("../../shared/utils/common.util");
+const { COMMON_MESSAGES } = require("./portal.constants");
+const { parseOptionList } = require("../../shared/parsers/option-list.parser");
 const {
   fetchCaptchaPayload,
   fetchCourts,
   fetchDistricts,
   initSession,
   setCourtDetails,
-} = require("./service");
-const { createSession, getSession } = require("./store/sessionStore");
+} = require("./portal.service");
+const { createSession, getSession } = require("../../shared/store/sessionStore");
 
 async function init(_req, res) {
   try {

@@ -2,9 +2,9 @@
 
 const express = require("express");
 
-const controller = require("./controller");
-const validators = require("./validators");
-const { PARTYNAME_ROUTE_PATHS } = require("./routePaths");
+const controller = require("./party-name.controller");
+const validators = require("./party-name.validators");
+const { PARTYNAME_ROUTE_PATHS } = require("./party-name.route-paths");
 
 const router = express.Router();
 

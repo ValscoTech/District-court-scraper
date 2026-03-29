@@ -6,7 +6,7 @@ const {
   sendJsonSuccess,
 } = require("./utils/common");
 const { buildBusinessDetailPdfBuffer } = require("./utils/pdf");
-const { MESSAGES } = require("./constants");
+const { MESSAGES } = require("./party-name.constants");
 const {
   buildBusinessDetailQueryParams,
   buildCaptchaFragment,
@@ -20,7 +20,7 @@ const {
   normalizePartySearchResponse,
   parsePartyNameResults,
   postWithRetry,
-} = require("./service");
+} = require("./party-name.service");
 const { parseCaseDetail } = require("./parsers");
 const { getSession } = require("./store/sessionStore");
 

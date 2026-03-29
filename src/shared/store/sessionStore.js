@@ -4,7 +4,7 @@ const axios = require("axios");
 const { wrapper } = require("axios-cookiejar-support");
 const { CookieJar } = require("tough-cookie");
 
-const { BASE_URL, DEFAULT_HEADERS } = require("../../../config/ecourts");
+const { BASE_URL, DEFAULT_HEADERS } = require("../../config/ecourts");
 
 const sessions = new Map();
 
