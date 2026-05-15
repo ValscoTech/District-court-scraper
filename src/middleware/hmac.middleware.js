@@ -22,7 +22,7 @@ const crypto = require("crypto");
 const WINDOW_MS = 30_000; // 30 seconds
 
 function verifyHmac(req, res, next) {
-  const secret = process.env.HMAC_SECRET;
+  const secret = process.env.INTERNAL_HMAC_SECRET || process.env.HMAC_SECRET;
   if (!secret) {
     // HMAC not configured — skip silently (allows disabling per environment)
     return next();

@@ -8,7 +8,7 @@ const rateLimit = require("express-rate-limit");
 
 const { corsOptions } = require("./config/cors");
 const { requestLogger } = require("./middleware/request-logger.middleware");
-const { requireAuth } = require("./middleware/auth.middleware");
+const { verifyHmac } = require("./middleware/hmac.middleware");
 
 const authRoutes = require("./modules/auth/auth.routes");
 const portalRoutes = require("./modules/portal/portal.routes");
@@ -51,13 +51,12 @@ app.use(requestLogger);
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
 // ─── 7. Auth routes — PUBLIC (no token needed) ──────────────────────────────
-//   GET /api/auth/me is internally protected by requireAuth inside its router
 app.use("/api/auth", authRoutes);
 
-// ─── 8. Firebase token gate — ALL routes below require a valid Firebase ID token
-app.use(requireAuth);
+// ─── 8. HMAC verification for API traffic (signature expected from external gateway) ───────────
+app.use("/api", verifyHmac);
 
-// ─── 9. Protected routes ─────────────────────────────────────────────────────
+// ─── 9. API routes ───────────────────────────────────────────────────────────
 app.use("/api/common", portalRoutes);
 app.use("/api/advocatename", advocateNameRoutes);
 app.use("/api/casenumber", caseNumberRoutes);
